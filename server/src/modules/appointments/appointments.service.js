@@ -245,9 +245,16 @@ export async function rescheduleAppointment(req, id, { professionalId, date, tim
   });
 }
 
-// ---------------------------------------------------------------- portal del paciente
+// ---------------------------------------------------------------- creación de solicitudes
 
-export async function createPublicRequest(req, input) {
+/**
+ * Crea una solicitud en una transacción: valida el turno, crea/actualiza el paciente,
+ * inserta la cita, el historial, la notificación y la auditoría.
+ * `channel`: PORTAL (paciente, sin sesión) o ADMISIONES (personal que atiende una llamada o mensaje).
+ */
+async function createAppointment(req, input, {
+  channel, status, assignedTo = null, historyNote, auditAction, auditModule, enforceActiveLimit,
+}) {
   const { specialtyId, professionalId, date, time } = input;
   assertBookableDate(date);
   try {
@@ -278,32 +285,40 @@ export async function createPublicRequest(req, input) {
           WHERE patient_id = $1 AND status <> 'CANCELADA' AND start_at > now()`,
         [patient.id],
       );
-      if (activeRows[0].n >= config.maxActiveRequestsPerPatient) {
+      if (enforceActiveLimit && activeRows[0].n >= config.maxActiveRequestsPerPatient) {
         throw conflict('Ya tiene el máximo de solicitudes activas. Comuníquese con Admisiones para gestionarlas.');
       }
 
       const { rows } = await db.query(
-        `INSERT INTO appointments (patient_id, specialty_id, professional_id, start_at, end_at, status, reason, channel)
-         VALUES ($1,$2,$3,$4,$5,'PENDIENTE',$6,'PORTAL') RETURNING id, code, start_at`,
-        [patient.id, specialtyId, slot.professionalId, slot.startAt, slot.endAt, input.reason || null],
+        `INSERT INTO appointments
+           (patient_id, specialty_id, professional_id, start_at, end_at, status, reason, channel, assigned_to)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, code, start_at`,
+        [patient.id, specialtyId, slot.professionalId, slot.startAt, slot.endAt, status, input.reason || null,
+          channel, assignedTo],
       );
       const appt = rows[0];
       await db.query(
         `INSERT INTO appointment_status_history (appointment_id, action, from_status, to_status, changed_by, note)
-         VALUES ($1, 'CREAR', NULL, 'PENDIENTE', NULL, 'Solicitud creada por el paciente desde el portal')`,
-        [appt.id],
+         VALUES ($1, 'CREAR', NULL, $2, $3, $4)`,
+        [appt.id, status, req.user?.id ?? null, historyNote],
       );
       await enqueueNotification(db, {
-        appointmentId: appt.id, eventType: NotificationEvent.SOLICITUD_RECIBIDA, payload: { code: appt.code },
+        appointmentId: appt.id,
+        eventType: status === Status.CONFIRMADA ? NotificationEvent.CITA_CONFIRMADA : NotificationEvent.SOLICITUD_RECIBIDA,
+        payload: { code: appt.code },
       });
       await audit(req, {
-        action: 'CREAR_SOLICITUD', module: 'portal', entity: 'appointment', entityId: appt.code,
-        detail: { pacienteNuevo: patient.inserted, datosContactoActualizados: !patient.inserted },
+        action: auditAction, module: auditModule, entity: 'appointment', entityId: appt.code,
+        detail: {
+          canal: channel, estado: status, pacienteNuevo: patient.inserted,
+          datosContactoActualizados: !patient.inserted, solicitudesActivasPrevias: activeRows[0].n,
+        },
       }, db);
 
       return {
+        id: appt.id,
         code: appt.code,
-        status: Status.PENDIENTE,
+        status,
         date: localDate(appt.start_at),
         time: localTime(appt.start_at),
         professionalName: slot.professionalName,
@@ -313,6 +328,54 @@ export async function createPublicRequest(req, input) {
     if (isUniqueViolation(err)) throw conflict('El horario seleccionado acaba de ser tomado. Por favor elija otro.');
     throw err;
   }
+}
+
+/** Portal del paciente: la solicitud queda PENDIENTE para que Admisiones la gestione. */
+export async function createPublicRequest(req, input) {
+  const { id: _id, ...result } = await createAppointment(req, input, {
+    channel: 'PORTAL',
+    status: Status.PENDIENTE,
+    historyNote: 'Solicitud creada por el paciente desde el portal',
+    auditAction: 'CREAR_SOLICITUD',
+    auditModule: 'portal',
+    enforceActiveLimit: true,
+  });
+  return result; // el id interno no se expone al portal
+}
+
+/**
+ * Admisiones registra una cita para un paciente que llamó o escribió. Como el admisionista habla
+ * directamente con el paciente, por defecto queda CONFIRMADA; si falta algo por validar, queda
+ * EN_GESTION. En ambos casos el admisionista queda como responsable.
+ * No aplica el límite de solicitudes activas del portal (protección contra abuso anónimo);
+ * el número de solicitudes activas previas queda en la auditoría.
+ */
+export async function createStaffAppointment(req, { confirmNow, note, ...input }) {
+  return createAppointment(req, input, {
+    channel: 'ADMISIONES',
+    status: confirmNow ? Status.CONFIRMADA : Status.EN_GESTION,
+    assignedTo: req.user.id,
+    historyNote: note || 'Cita creada por Admisiones (llamada o mensaje del paciente)',
+    auditAction: 'CREAR_CITA_ADMISIONES',
+    auditModule: 'appointments',
+    enforceActiveLimit: false,
+  });
+}
+
+/** Busca un paciente por documento para prellenar el formulario de Admisiones. Se audita. */
+export async function findPatient(req, { documentType, documentNumber }) {
+  const { rows } = await query(
+    `SELECT p.full_name AS "fullName", p.phone, p.email,
+            (SELECT count(*)::int FROM appointments a
+              WHERE a.patient_id = p.id AND a.status <> 'CANCELADA' AND a.start_at > now()) AS "activeAppointments"
+       FROM patients p WHERE p.document_type = $1 AND p.document_number = $2`,
+    [documentType, documentNumber],
+  );
+  await audit(req, {
+    action: 'BUSCAR_PACIENTE', module: 'appointments', entity: 'patient',
+    entityId: `${documentType} ${documentNumber}`, result: rows[0] ? 'EXITO' : 'FALLO',
+  });
+  return { found: Boolean(rows[0]), patient: rows[0] ?? null };
 }
 
 /** Consulta pública: exige código + documento y devuelve solo datos mínimos. */

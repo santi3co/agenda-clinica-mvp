@@ -6,6 +6,7 @@ import Login from './Login.jsx';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
 import RequestDetail from './RequestDetail.jsx';
+import NewAppointment from './NewAppointment.jsx';
 import CalendarPage from './CalendarPage.jsx';
 import AdminUsers from './AdminUsers.jsx';
 import AuditLog from './AuditLog.jsx';
@@ -34,6 +35,7 @@ export default function StaffApp() {
         <Routes>
           <Route index element={<Dashboard />} />
           <Route path="solicitudes" element={<Requests />} />
+          {can('appointments:manage') && <Route path="solicitudes/nueva" element={<NewAppointment />} />}
           <Route path="solicitudes/:id" element={<RequestDetail />} />
           <Route path="calendario" element={<CalendarPage />} />
           {can('users:manage') && <Route path="usuarios" element={<AdminUsers />} />}

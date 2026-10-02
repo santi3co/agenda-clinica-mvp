@@ -6,7 +6,7 @@ import { Alert, Spinner, StatusBadge } from '../ui.jsx';
 import { useAuth } from './StaffApp.jsx';
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -34,6 +34,7 @@ export default function Dashboard() {
           <p className="muted">{fmtPlainDate(data.today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
         <div className="row-actions">
+          {can('appointments:manage') && <Link className="btn" to="/admisiones/solicitudes/nueva">+ Nueva cita</Link>}
           <Link className="btn" to="/admisiones/solicitudes?status=PENDIENTE">Gestionar pendientes</Link>
           <Link className="btn btn-ghost" to="/admisiones/calendario">Ver calendario</Link>
         </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { api, errorText } from '../api.js';
 import { ACTION_LABEL, addDays, fmtDate, fmtDateTime, fmtPlainDate, fmtTime, isoDate, STATUS } from '../format.js';
 import { Alert, Field, Modal, Spinner, StatusBadge } from '../ui.jsx';
@@ -8,10 +8,11 @@ import { useCatalog } from './useCatalog.js';
 
 export default function RequestDetail() {
   const { id } = useParams();
+  const location = useLocation();
   const { can } = useAuth();
   const [a, setA] = useState(null);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(location.state?.notice || '');
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
 

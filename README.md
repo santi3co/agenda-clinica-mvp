@@ -91,7 +91,11 @@ Las contraseñas se guardan con bcrypt; las de arriba solo existen en el script 
 14. El **Historial de la solicitud** muestra cada paso con usuario, fecha/hora, estado anterior y nuevo.
 15. Ingresar como `admin01` → **Auditoría** → buscar el código: aparecen creación, consultas, cambios de estado,
     inicios de sesión y accesos denegados.
-16. Probar RBAC: como `admision01`, abrir `/admisiones/auditoria` → no está disponible, y la API responde 403.
+16. **Nueva cita por Admisiones** (paciente que llama o escribe): en *Solicitudes* → **+ Nueva cita**.
+    Buscar por documento (p. ej. CC `99000003`: carga sus datos), elegir especialidad, fecha y horario,
+    marcar la autorización verbal de datos → **Crear cita**. Queda *Confirmada* (o *En gestión* si se desmarca
+    la casilla), con canal *Admisiones* y el admisionista como responsable.
+17. Probar RBAC: como `admision01`, abrir `/admisiones/auditoria` → no está disponible, y la API responde 403.
 
 ## 4. Arquitectura y stack
 
@@ -156,7 +160,8 @@ Estados: `PENDIENTE → EN_GESTION → CONFIRMADA → REGISTRADA_EN_SALUDSYSTEM1
 datos + autorización de datos → confirmación), código de solicitud, consulta de estado con código + documento
 (datos mínimos y nombre enmascarado), motivo solo en especialidades que lo requieren.
 
-**Admisiones:** inicio con pendientes, citas del día, próximas citas y cupos libres; bandeja con búsqueda,
+**Admisiones:** creación de citas para pacientes que llaman o escriben (búsqueda por documento, canal
+`ADMISIONES`, queda *Confirmada* o *En gestión*, autorización verbal de datos registrada y auditada); inicio con pendientes, citas del día, próximas citas y cupos libres; bandeja con búsqueda,
 filtros (estado, especialidad, profesional, rango de fechas), orden y paginación; detalle con acciones
 tomar / confirmar / reprogramar (con disponibilidad) / cancelar (motivo obligatorio) / registrar en
 SaludSystem12; historial; "copiar datos"; calendario día/semana/mes con filtros y panel de disponibilidad.
@@ -177,7 +182,6 @@ transición inválida, historial y auditoría) y recorrido manual en navegador d
 - Integración real con SaludSystem12 y con WhatsApp.
 - Administración de agendas desde la interfaz (horarios, festivos, ausencias, bloqueos).
 - Verificación de identidad del paciente (OTP) y cancelación/reprogramación por el propio paciente.
-- Creación de citas por Admisiones para pacientes que llaman o escriben (canal `ADMISIONES` ya previsto).
 - Convenios/EPS/autorizaciones, si Admisiones los requiere.
 - Reportes e indicadores; exportación de auditoría.
 - Aviso de privacidad y texto de autorización definitivos aprobados por la clínica.

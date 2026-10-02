@@ -136,6 +136,60 @@ test('flujo completo: portal → admisiones → SaludSystem12 → trazabilidad',
   }
 });
 
+test('Admisiones crea citas para pacientes que llaman o escriben', async () => {
+  const specialties = (await api('/catalog/specialties')).body;
+  const ped = specialties.find((s) => s.name === 'Pediatría');
+  const mi = specialties.find((s) => s.name === 'Medicina Interna');
+  const { date, slots } = await firstAvailable(ped.id);
+  const patient = {
+    documentType: 'CC', documentNumber: '99000005', fullName: 'Paciente Llamada Demo', phone: '3009990005',
+    email: '', dataConsent: true,
+  };
+  const body = { ...patient, specialtyId: ped.id, professionalId: slots[0].professionalId, date, time: slots[0].time };
+
+  // Sin sesión: 401
+  assert.equal((await api('/staff/appointments', { method: 'POST', body })).status, 401);
+
+  const cookie = await login('admision02', 'Admision02*Demo');
+
+  // Búsqueda de paciente existente (ficticio del seed) y de uno inexistente
+  const found = await api('/staff/patients/lookup?documentType=CC&documentNumber=99000005', { cookie });
+  assert.equal(found.body.found, true);
+  assert.equal((await api('/staff/patients/lookup?documentType=CC&documentNumber=99199999', { cookie })).body.found, false);
+
+  // Sin autorización de datos: 400
+  assert.equal((await api('/staff/appointments', { method: 'POST', body: { ...body, dataConsent: false }, cookie })).status, 400);
+
+  // Por defecto queda CONFIRMADA, canal ADMISIONES, con el admisionista como responsable
+  const created = await api('/staff/appointments', { method: 'POST', body: { ...body, note: 'Llamó a Admisiones' }, cookie });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.status, 'CONFIRMADA');
+  const detail = await api(`/staff/appointments/${created.body.id}`, { cookie });
+  assert.equal(detail.body.channel, 'ADMISIONES');
+  assert.equal(detail.body.assignedUsername, 'admision02');
+  assert.equal(detail.body.history[0].action, 'CREAR');
+  assert.equal(detail.body.history[0].username, 'admision02');
+  assert.equal(detail.body.history[0].note, 'Llamó a Admisiones');
+  assert.deepEqual(detail.body.notifications.map((n) => n.eventType), ['CITA_CONFIRMADA']);
+  assert.ok(detail.body.allowedActions.includes('REGISTRAR_SALUDSYSTEM12'));
+
+  // El mismo turno no se puede volver a asignar
+  assert.equal((await api('/staff/appointments', { method: 'POST', body, cookie })).status, 409);
+
+  // confirmNow=false → EN_GESTION; especialidad con motivo obligatorio
+  const mia = await firstAvailable(mi.id);
+  const miBody = { ...patient, specialtyId: mi.id, date: mia.date, time: mia.slots[0].time, confirmNow: false };
+  assert.equal((await api('/staff/appointments', { method: 'POST', body: miBody, cookie })).status, 400);
+  const pending = await api('/staff/appointments', { method: 'POST', body: { ...miBody, reason: 'Control' }, cookie });
+  assert.equal(pending.status, 201, JSON.stringify(pending.body));
+  assert.equal(pending.body.status, 'EN_GESTION');
+
+  // Auditoría
+  const adminCookie = await login('admin01', 'Admin01*Demo');
+  const logs = await api(`/admin/audit-logs?q=${created.body.code}`, { cookie: adminCookie });
+  assert.ok(logs.body.items.some((l) => l.action === 'CREAR_CITA_ADMISIONES' && l.username === 'admision02'));
+});
+
 test('login con contraseña incorrecta queda auditado como FALLO', async () => {
   assert.equal((await api('/auth/login', { method: 'POST', body: { username: 'admision01', password: 'mala' } })).status, 401);
   const { rows } = await pool.query(

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, errorText } from '../api.js';
 import { fmtDate, fmtDateTime, fmtTime, STATUS } from '../format.js';
 import { Alert, Spinner, StatusBadge } from '../ui.jsx';
+import { useAuth } from './StaffApp.jsx';
 import { useCatalog } from './useCatalog.js';
 
 const FILTER_KEYS = ['q', 'status', 'specialtyId', 'professionalId', 'dateFrom', 'dateTo', 'sort'];
@@ -10,6 +11,7 @@ const FILTER_KEYS = ['q', 'status', 'specialtyId', 'professionalId', 'dateFrom',
 export default function Requests() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
   const { specialties, professionals } = useCatalog();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -39,6 +41,7 @@ export default function Requests() {
     <div>
       <div className="page-head">
         <h1>Solicitudes</h1>
+        {can('appointments:manage') && <Link className="btn" to="/admisiones/solicitudes/nueva">+ Nueva cita</Link>}
       </div>
 
       <form className="filters" onSubmit={(e) => { e.preventDefault(); update({ q }); }}>

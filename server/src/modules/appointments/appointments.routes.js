@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { config } from '../../config.js';
 import { asyncHandler, parse } from '../../lib/errors.js';
 import { requireAuth, requirePermission } from '../../middleware/auth.js';
 import { audit } from '../audit/audit.service.js';
 import * as svc from './appointments.service.js';
+import { appointmentRequestFields, documentNumber, documentType } from './schemas.js';
 import { Status } from './status.js';
 
 // Panel de Admisiones. Todas las rutas exigen sesión de personal + permiso.
@@ -58,6 +60,24 @@ router.get('/appointments/:id', requirePermission('appointments:read'), asyncHan
 }));
 
 const manage = requirePermission('appointments:manage');
+
+// Cita creada por Admisiones para un paciente que llamó o escribió (canal ADMISIONES).
+router.post('/appointments', manage, asyncHandler(async (req, res) => {
+  const input = parse(z.object({
+    ...appointmentRequestFields,
+    dataConsent: z.literal(true, {
+      errorMap: () => ({ message: 'Confirme que el paciente autorizó el tratamiento de sus datos' }),
+    }),
+    confirmNow: z.boolean().default(true),
+    note: optionalNote,
+  }), req.body);
+  res.status(201).json(await svc.createStaffAppointment(req, { ...input, consentVersion: config.consentVersion }));
+}));
+
+// Búsqueda de paciente por documento para prellenar el formulario de nueva cita.
+router.get('/patients/lookup', manage, asyncHandler(async (req, res) => {
+  res.json(await svc.findPatient(req, parse(z.object({ documentType, documentNumber }), req.query)));
+}));
 
 router.post('/appointments/:id/take', manage, asyncHandler(async (req, res) => {
   const { id } = parse(idParam, req.params);
