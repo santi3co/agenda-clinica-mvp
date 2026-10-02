@@ -99,7 +99,7 @@ export default function NewAppointment() {
           dataConsent,
         },
       });
-      navigate(`/admisiones/solicitudes/${res.id}`, { state: { notice: `Cita ${res.code} creada.` } });
+      navigate(`/admisiones/solicitudes/${res.id}`, { state: { notice: `Cita ${res.code} creada.`, managePath: res.managePath } });
     } catch (e) {
       setError(errorText(e));
       if (e.status === 409 && /horario/i.test(e.message)) loadSlots();

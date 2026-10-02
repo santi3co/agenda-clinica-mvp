@@ -58,6 +58,7 @@ Crea solicitudes adicionales de prueba; ejecute `npm run db:reset` después si q
 | `/` | Portal del paciente |
 | `/agendar` | Agendar cita |
 | `/consultar` | Consultar estado de una solicitud |
+| `/cita/<enlace>` | Enlace privado del paciente: ver, cambiar o cancelar su cita |
 | `/admisiones` | Panel de Admisiones (requiere inicio de sesión) |
 
 ## 2. Usuarios de prueba (solo desarrollo)
@@ -95,7 +96,11 @@ Las contraseñas se guardan con bcrypt; las de arriba solo existen en el script 
     Buscar por documento (p. ej. CC `99000003`: carga sus datos), elegir especialidad, fecha y horario,
     marcar la autorización verbal de datos → **Crear cita**. Queda *Confirmada* (o *En gestión* si se desmarca
     la casilla), con canal *Admisiones* y el admisionista como responsable.
-17. Probar RBAC: como `admision01`, abrir `/admisiones/auditoria` → no está disponible, y la API responde 403.
+17. **Enlace privado del paciente:** en el detalle de una cita activa → *Enlace para el paciente* →
+    **Generar enlace** → **Copiar mensaje para WhatsApp**. Abrir el enlace, escribir el documento del paciente
+    y probar *Cambiar fecha u hora* o *Cancelar cita*. El historial muestra la acción como "Paciente".
+    (Al agendar desde el portal, el enlace también aparece en la pantalla de confirmación.)
+18. Probar RBAC: como `admision01`, abrir `/admisiones/auditoria` → no está disponible, y la API responde 403.
 
 ## 4. Arquitectura y stack
 
@@ -144,7 +149,8 @@ agenda-clinica-mvp/
 ## 6. Modelo de datos
 
 `roles`, `permissions`, `role_permissions`, `users`, `specialties`, `professionals`, `schedules`,
-`patients`, `appointments`, `appointment_status_history`, `audit_logs`, `notification_outbox`.
+`patients`, `appointments`, `appointment_status_history`, `audit_logs`, `notification_outbox`,
+`appointment_access_links` (enlaces del paciente: solo se guarda el hash SHA-256 del token).
 
 Reglas en la propia base de datos: documento único por paciente; código `SOL-000001` por secuencia;
 **índice único parcial que impide la doble reserva** de un profesional a la misma hora; `CHECK` de estados
@@ -158,7 +164,11 @@ Estados: `PENDIENTE → EN_GESTION → CONFIRMADA → REGISTRADA_EN_SALUDSYSTEM1
 
 **Paciente:** agendamiento en 4 pasos (especialidad → profesional opcional → día/hora con cupos reales →
 datos + autorización de datos → confirmación), código de solicitud, consulta de estado con código + documento
-(datos mínimos y nombre enmascarado), motivo solo en especialidades que lo requieren.
+(datos mínimos y nombre enmascarado), motivo solo en especialidades que lo requieren. **Enlace privado por cita**
+(`/cita/<token>`): con su número de documento, el paciente ve su cita, la cambia de horario (si estaba confirmada
+queda *Reprogramada* para que Admisiones la reconfirme; si estaba pendiente sigue *Pendiente*) o la cancela.
+No se permiten cambios con menos de 2 horas de anticipación (`patientChangeMinHours`). Un solo enlace vigente
+por cita: Admisiones puede generar uno nuevo, que invalida el anterior; deja de funcionar cuando la cita pasa.
 
 **Admisiones:** creación de citas para pacientes que llaman o escriben (búsqueda por documento, canal
 `ADMISIONES`, queda *Confirmada* o *En gestión*, autorización verbal de datos registrada y auditada); inicio con pendientes, citas del día, próximas citas y cupos libres; bandeja con búsqueda,
@@ -181,7 +191,8 @@ transición inválida, historial y auditoría) y recorrido manual en navegador d
 
 - Integración real con SaludSystem12 y con WhatsApp.
 - Administración de agendas desde la interfaz (horarios, festivos, ausencias, bloqueos).
-- Verificación de identidad del paciente (OTP) y cancelación/reprogramación por el propio paciente.
+- Verificación de identidad del paciente con OTP (hoy el enlace exige el número de documento).
+- Envío automático del enlace por WhatsApp (hoy Admisiones copia el mensaje y lo pega).
 - Convenios/EPS/autorizaciones, si Admisiones los requiere.
 - Reportes e indicadores; exportación de auditoría.
 - Aviso de privacidad y texto de autorización definitivos aprobados por la clínica.
@@ -195,6 +206,8 @@ transición inválida, historial y auditoría) y recorrido manual en navegador d
 2. **Doble fuente de verdad** con SaludSystem12 mientras el registro sea manual: riesgo de citas desalineadas.
 3. **Identidad del paciente:** hoy cualquiera que conozca un documento puede crear solicitudes y actualizar
    los datos de contacto de ese paciente (queda auditado). Se requiere OTP u otra verificación.
+   El enlace de gestión depende de que solo el paciente lo tenga, más su número de documento: quien tenga
+   ambos puede cancelar o mover la cita. Para producción, agregar OTP al celular registrado.
 4. **Abuso del portal** (bots que bloquean cupos): hoy solo hay límite por IP y máximo 3 solicitudes activas
    por paciente; evaluar CAPTCHA, verificación y expiración de reservas no gestionadas.
 5. **Seguridad operativa:** HTTPS obligatorio, secretos en gestor de secretos, validar certificado TLS de la BD

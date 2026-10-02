@@ -334,3 +334,11 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   .pager { flex-wrap: wrap; }
   .wizard-nav .btn { flex: 1; }
 }
+
+/* Enlace de gestión del paciente */
+.manage h1 { font-size: 1.3rem; margin: 0; }
+.manage-panel { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.manage-panel h2 { font-size: 1.1rem; }
+.link-box { display: flex; flex-direction: column; gap: .5rem; }
+.link-box textarea { font-size: .9rem; }
+.break { word-break: break-all; }

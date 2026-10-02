@@ -190,6 +190,67 @@ test('Admisiones crea citas para pacientes que llaman o escriben', async () => {
   assert.ok(logs.body.items.some((l) => l.action === 'CREAR_CITA_ADMISIONES' && l.username === 'admision02'));
 });
 
+test('enlace privado: el paciente ve, reprograma y cancela su cita', async () => {
+  const specialties = (await api('/catalog/specialties')).body;
+  const orto = specialties.find((s) => s.name === 'Ortopedia');
+  const { date, slots } = await firstAvailable(orto.id);
+  const [first, second] = slots.filter((s) => s.professionalId === slots[0].professionalId);
+
+  // Al crear la solicitud en el portal se entrega el enlace
+  const created = await api('/public/requests', {
+    method: 'POST',
+    body: {
+      documentType: 'CC', documentNumber: '99100003', fullName: 'Paciente Enlace Prueba', phone: '3009990003',
+      specialtyId: orto.id, professionalId: first.professionalId, date, time: first.time, dataConsent: true,
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.match(created.body.managePath, /^\/cita\/[A-Za-z0-9_-]{43}$/);
+  assert.equal(created.body.id, undefined); // el id interno no se expone
+  const token = created.body.managePath.split('/').pop();
+  const auth = { token, documentNumber: '99100003' };
+
+  // Documento equivocado o token inexistente: mismo 404
+  assert.equal((await api('/public/manage/view', { method: 'POST', body: { ...auth, documentNumber: '99100004' } })).status, 404);
+  assert.equal((await api('/public/manage/view', { method: 'POST', body: { ...auth, token: 'x'.repeat(43) } })).status, 404);
+
+  const view = await api('/public/manage/view', { method: 'POST', body: auth });
+  assert.equal(view.status, 200, JSON.stringify(view.body));
+  assert.equal(view.body.code, created.body.code);
+  assert.equal(view.body.patientName, 'Paciente E. P.');
+  assert.equal(view.body.canCancel, true);
+  assert.equal(view.body.canReschedule, true);
+
+  // Reprogramar una solicitud PENDIENTE: cambia de hora y sigue PENDIENTE
+  const resch = await api('/public/manage/reschedule', {
+    method: 'POST', body: { ...auth, professionalId: second.professionalId, date, time: second.time },
+  });
+  assert.equal(resch.status, 200, JSON.stringify(resch.body));
+  assert.equal(resch.body.status, 'PENDIENTE');
+  assert.equal(resch.body.time, second.time);
+
+  // Admisiones ve el enlace vigente y puede regenerarlo: el anterior deja de funcionar
+  const cookie = await login('admision01', 'Admision01*Demo');
+  const id = (await api(`/staff/appointments?q=${created.body.code}`, { cookie })).body.items[0].id;
+  const detail = await api(`/staff/appointments/${id}`, { cookie });
+  assert.ok(detail.body.patientLink?.lastUsedAt);
+  assert.equal(detail.body.history.at(-1).action, 'REPROGRAMAR');
+  assert.equal(detail.body.history.at(-1).username, null); // lo hizo el paciente
+  const regen = await api(`/staff/appointments/${id}/patient-link`, { method: 'POST', body: {}, cookie });
+  assert.equal(regen.status, 200, JSON.stringify(regen.body));
+  assert.equal((await api('/public/manage/view', { method: 'POST', body: auth })).status, 404);
+  const auth2 = { token: regen.body.path.split('/').pop(), documentNumber: '99100003' };
+
+  // Cancelar desde el nuevo enlace
+  const cancel = await api('/public/manage/cancel', { method: 'POST', body: { ...auth2, reason: 'Ya no puedo asistir' } });
+  assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+  assert.equal(cancel.body.status, 'CANCELADA');
+  assert.equal(cancel.body.canCancel, false);
+  assert.equal((await api('/public/manage/cancel', { method: 'POST', body: { ...auth2, reason: 'Otra vez' } })).status, 409);
+  const after = await api(`/staff/appointments/${id}`, { cookie });
+  assert.equal(after.body.cancelReason, 'Cancelada por el paciente: Ya no puedo asistir');
+});
+
 test('login con contraseña incorrecta queda auditado como FALLO', async () => {
   assert.equal((await api('/auth/login', { method: 'POST', body: { username: 'admision01', password: 'mala' } })).status, 401);
   const { rows } = await pool.query(

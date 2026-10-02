@@ -6,6 +6,7 @@ import { audit } from '../audit/audit.service.js';
 import { getAvailability, assertBookableDate } from '../catalog/availability.service.js';
 import { enqueueNotification, NotificationEvent } from '../integrations/notifications.service.js';
 import { saludSystem12 } from '../integrations/saludsystem12.adapter.js';
+import { activeLinkInfo, issuePatientLink } from '../patient-links/patient-links.service.js';
 import { allowedActions, TRANSITIONS, Status } from './status.js';
 
 const SELECT_APPOINTMENT = `
@@ -67,7 +68,7 @@ export async function getAppointmentDetail(id) {
   const appointment = rows[0];
   if (!appointment) throw notFound('Solicitud no encontrada');
 
-  const [history, notifications] = await Promise.all([
+  const [history, notifications, patientLink] = await Promise.all([
     query(
       `SELECT h.id, h.action, h.from_status AS "fromStatus", h.to_status AS "toStatus", h.note,
               h.previous_start_at AS "previousStartAt", h.new_start_at AS "newStartAt",
@@ -81,12 +82,14 @@ export async function getAppointmentDetail(id) {
          FROM notification_outbox WHERE appointment_id = $1 ORDER BY created_at, id`,
       [id],
     ),
+    activeLinkInfo(id),
   ]);
   return {
     ...appointment,
     allowedActions: allowedActions(appointment.status),
     history: history.rows,
     notifications: notifications.rows,
+    patientLink,
   };
 }
 
@@ -151,9 +154,13 @@ export async function dashboard() {
 /**
  * Aplica una acción de la máquina de estados dentro de una transacción:
  * bloquea la fila, valida la transición, actualiza, escribe historial, cola de notificación y auditoría.
+ * Sin `req.user` el actor es el paciente (enlace de gestión): el historial queda con changed_by NULL.
+ * `rule` permite reglas propias del paciente; `to` puede ser una función del estado actual.
  */
-async function transition(req, id, action, { note = null, extraUpdate, historyExtra = {}, notification } = {}) {
-  const rule = TRANSITIONS[action];
+export async function transition(req, id, action, {
+  note = null, extraUpdate, historyExtra = {}, notification, rule = TRANSITIONS[action], auditModule = 'appointments',
+} = {}) {
+  const userId = req.user?.id ?? null;
   try {
     await withTransaction(async (db) => {
       const { rows } = await db.query('SELECT * FROM appointments WHERE id = $1 FOR UPDATE', [id]);
@@ -162,9 +169,10 @@ async function transition(req, id, action, { note = null, extraUpdate, historyEx
       if (!rule.from.includes(current.status)) {
         throw conflict(`No se puede ${action.toLowerCase().replaceAll('_', ' ')} una solicitud en estado ${current.status}`);
       }
+      const to = typeof rule.to === 'function' ? rule.to(current.status) : rule.to;
 
       const sets = ['status = $2', 'updated_at = now()', 'assigned_to = COALESCE(assigned_to, $3)'];
-      const params = [id, rule.to, req.user.id];
+      const params = [id, to, userId];
       if (action === 'TOMAR') sets[2] = 'assigned_to = $3';
       if (extraUpdate) {
         for (const [col, value] of Object.entries(await extraUpdate(db, current))) {
@@ -178,22 +186,22 @@ async function transition(req, id, action, { note = null, extraUpdate, historyEx
         `INSERT INTO appointment_status_history
            (appointment_id, action, from_status, to_status, changed_by, note, previous_start_at, new_start_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id, action, current.status, rule.to, req.user.id, note,
+        [id, action, current.status, to, userId, note,
           historyExtra.previousStartAt ?? null, historyExtra.newStartAt ?? null],
       );
       if (notification) {
         await enqueueNotification(db, { appointmentId: id, eventType: notification, payload: { code: current.code, ...historyExtra } });
       }
       await audit(req, {
-        action, module: 'appointments', entity: 'appointment', entityId: current.code,
-        detail: { from: current.status, to: rule.to, note, ...historyExtra },
+        action, module: auditModule, entity: 'appointment', entityId: current.code,
+        detail: { from: current.status, to, note, ...historyExtra },
       }, db);
     });
     return await getAppointmentDetail(id);
   } catch (err) {
     const httpErr = isUniqueViolation(err) ? conflict('El horario seleccionado ya está ocupado') : err;
     await audit(req, {
-      action, module: 'appointments', entity: 'appointment', entityId: id, result: 'FALLO',
+      action, module: auditModule, entity: 'appointment', entityId: id, result: 'FALLO',
       detail: { error: httpErr.message },
     });
     throw httpErr;
@@ -205,8 +213,9 @@ export const takeAppointment = (req, id, { note }) => transition(req, id, 'TOMAR
 export const confirmAppointment = (req, id, { note }) =>
   transition(req, id, 'CONFIRMAR', { note, notification: NotificationEvent.CITA_CONFIRMADA });
 
-export const cancelAppointment = (req, id, { reason }) =>
+export const cancelAppointment = (req, id, { reason }, options = {}) =>
   transition(req, id, 'CANCELAR', {
+    ...options,
     note: reason,
     extraUpdate: () => ({ cancel_reason: reason }),
     notification: NotificationEvent.CITA_CANCELADA,
@@ -221,10 +230,12 @@ export const registerInSaludSystem12 = (req, id, { externalRef, note }) =>
     },
   });
 
-export async function rescheduleAppointment(req, id, { professionalId, date, time, note }) {
+/** `options` (rule, auditModule) permite reutilizarla para la reprogramación hecha por el paciente. */
+export async function rescheduleAppointment(req, id, { professionalId, date, time, note }, options = {}) {
   assertBookableDate(date);
   const historyExtra = {};
   return transition(req, id, 'REPROGRAMAR', {
+    ...options,
     note,
     historyExtra,
     notification: NotificationEvent.CITA_REPROGRAMADA,
@@ -314,6 +325,7 @@ async function createAppointment(req, input, {
           datosContactoActualizados: !patient.inserted, solicitudesActivasPrevias: activeRows[0].n,
         },
       }, db);
+      const managePath = await issuePatientLink(db, appt.id, req.user?.id ?? null);
 
       return {
         id: appt.id,
@@ -322,6 +334,7 @@ async function createAppointment(req, input, {
         date: localDate(appt.start_at),
         time: localTime(appt.start_at),
         professionalName: slot.professionalName,
+        managePath, // enlace privado del paciente: solo se entrega en esta respuesta
       };
     });
   } catch (err) {
@@ -396,7 +409,6 @@ export async function lookupPublic(req, { code, documentNumber }) {
   });
   // Mismo mensaje si el código no existe o el documento no coincide (no revela cuál falló).
   if (!found) throw new HttpError(404, 'No encontramos una solicitud con esos datos');
-  const [first, ...rest] = found.full_name.split(' ');
   return {
     code: found.code,
     status: found.status,
@@ -404,6 +416,12 @@ export async function lookupPublic(req, { code, documentNumber }) {
     time: localTime(found.start_at),
     specialty: found.specialty,
     professional: found.professional,
-    patientName: `${first} ${rest.map((w) => `${w[0]}.`).join(' ')}`.trim(),
+    patientName: maskName(found.full_name),
   };
+}
+
+/** "María Ficticio Demo" → "María F. D." */
+export function maskName(fullName) {
+  const [first, ...rest] = fullName.split(' ');
+  return `${first} ${rest.map((w) => `${w[0]}.`).join(' ')}`.trim();
 }

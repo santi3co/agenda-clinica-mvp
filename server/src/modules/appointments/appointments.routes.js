@@ -4,6 +4,7 @@ import { config } from '../../config.js';
 import { asyncHandler, parse } from '../../lib/errors.js';
 import { requireAuth, requirePermission } from '../../middleware/auth.js';
 import { audit } from '../audit/audit.service.js';
+import { generatePatientLink } from '../patient-links/patient-links.service.js';
 import * as svc from './appointments.service.js';
 import { appointmentRequestFields, documentNumber, documentType } from './schemas.js';
 import { Status } from './status.js';
@@ -108,6 +109,12 @@ router.post('/appointments/:id/cancel', manage, asyncHandler(async (req, res) =>
     reason: z.string().trim().min(3, 'Indique el motivo de la cancelación').max(200),
   }), req.body);
   res.json(await svc.cancelAppointment(req, id, { reason }));
+}));
+
+// Genera el enlace privado para que el paciente gestione su cita (revoca el anterior).
+router.post('/appointments/:id/patient-link', manage, asyncHandler(async (req, res) => {
+  const { id } = parse(idParam, req.params);
+  res.json(await generatePatientLink(req, id));
 }));
 
 router.post('/appointments/:id/register-saludsystem12', manage, asyncHandler(async (req, res) => {

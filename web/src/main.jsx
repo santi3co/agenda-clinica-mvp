@@ -5,6 +5,7 @@ import PatientLayout from './patient/PatientLayout.jsx';
 import Home from './patient/Home.jsx';
 import Booking from './patient/Booking.jsx';
 import StatusLookup from './patient/StatusLookup.jsx';
+import ManageAppointment from './patient/ManageAppointment.jsx';
 import { Spinner } from './ui.jsx';
 import './styles.css';
 
@@ -20,6 +21,7 @@ createRoot(document.getElementById('root')).render(
           <Route index element={<Home />} />
           <Route path="agendar" element={<Booking />} />
           <Route path="consultar" element={<StatusLookup />} />
+          <Route path="cita/:token" element={<ManageAppointment />} />
         </Route>
         <Route
           path="admisiones/*"

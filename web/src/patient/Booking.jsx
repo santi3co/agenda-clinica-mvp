@@ -115,8 +115,13 @@ export default function Booking() {
           Su horario queda <strong>reservado</strong> y en estado <strong>Pendiente</strong>. Admisiones revisará la solicitud y
           confirmará la cita. Más adelante recibirá la confirmación por WhatsApp.
         </Alert>
+        <Alert kind="info">
+          Con este enlace privado puede ver, cambiar o cancelar su cita. Guárdelo y no lo comparta:
+          <br /><strong className="mono break">{window.location.origin}{result.managePath}</strong>
+        </Alert>
         <div className="row-actions">
-          <Link className="btn" to="/consultar" state={{ code: result.code }}>Consultar estado</Link>
+          <Link className="btn" to={result.managePath}>Gestionar mi cita</Link>
+          <Link className="btn btn-ghost" to="/consultar" state={{ code: result.code }}>Consultar estado</Link>
           <Link className="btn btn-ghost" to="/">Volver al inicio</Link>
         </div>
       </section>

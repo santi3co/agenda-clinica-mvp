@@ -4,7 +4,7 @@ import { api, errorText } from '../api.js';
 import { fmtPlainDate } from '../format.js';
 import { Alert, Field, StatusBadge } from '../ui.jsx';
 
-const EXPLAIN = {
+export const EXPLAIN = {
   PENDIENTE: 'Recibimos su solicitud y su horario está reservado. Admisiones la revisará pronto.',
   EN_GESTION: 'Admisiones está gestionando su solicitud.',
   CONFIRMADA: 'Su cita está confirmada. Por favor llegue 20 minutos antes.',

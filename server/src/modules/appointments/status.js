@@ -27,3 +27,15 @@ export const TRANSITIONS = Object.freeze({
 export function allowedActions(status) {
   return Object.entries(TRANSITIONS).filter(([, t]) => t.from.includes(status)).map(([action]) => action);
 }
+
+/**
+ * Reglas para el paciente que gestiona su cita desde el enlace privado.
+ * Una solicitud PENDIENTE se mueve de horario y sigue PENDIENTE; las demás quedan REPROGRAMADA
+ * para que Admisiones las reconfirme.
+ */
+export const PATIENT_TRANSITIONS = Object.freeze({
+  REPROGRAMAR: {
+    from: [Status.PENDIENTE, ...TRANSITIONS.REPROGRAMAR.from],
+    to: (current) => (current === Status.PENDIENTE ? Status.PENDIENTE : Status.REPROGRAMADA),
+  },
+});

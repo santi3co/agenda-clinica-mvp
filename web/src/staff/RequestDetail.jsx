@@ -116,6 +116,8 @@ export default function RequestDetail() {
           </dl>
         </section>
 
+        <PatientLinkPanel appt={a} canManage={manage} initialPath={location.state?.managePath} onChanged={load} />
+
         <section className="panel span-2">
           <h2>Historial de la solicitud</h2>
           <ol className="timeline">
@@ -126,7 +128,7 @@ export default function RequestDetail() {
                   <time>{fmtDateTime(h.createdAt)}</time>
                 </div>
                 <div className="tl-body">
-                  <span>{h.username ? <>Usuario: <strong>{h.username}</strong></> : 'Paciente (portal web)'}</span>
+                  <span>{h.username ? <>Usuario: <strong>{h.username}</strong></> : 'Paciente'}</span>
                   <span>
                     {h.fromStatus && <><StatusBadge status={h.fromStatus} /> → </>}
                     <StatusBadge status={h.toStatus} />
@@ -168,6 +170,79 @@ export default function RequestDetail() {
       {modal === 'reschedule' && <RescheduleModal appt={a} busy={busy} registered={registered} onClose={() => setModal(null)}
         onSubmit={(body) => run('reschedule', body, 'Cita reprogramada. Debe confirmarse nuevamente con el paciente.')} />}
     </div>
+  );
+}
+
+/**
+ * Enlace privado para que el paciente gestione su cita. La BD solo guarda el hash del token,
+ * así que el enlace se ve únicamente al generarlo (o justo después de crear la cita).
+ */
+function PatientLinkPanel({ appt, canManage, initialPath, onChanged }) {
+  const [path, setPath] = useState(initialPath || null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const active = appt.status !== 'CANCELADA' && new Date(appt.startAt) > new Date();
+  const info = appt.patientLink;
+  const firstName = appt.patientName.split(' ')[0];
+  const message = path && [
+    `Hola ${firstName}, le escribimos de Admisiones de la Clínica Salud Divina de la Costa.`,
+    `Su cita de ${appt.specialtyName} es el ${fmtDate(appt.startAt)} a las ${fmtTime(appt.startAt)} con ${appt.professionalName}.`,
+    `Puede ver, cambiar o cancelar su cita aquí: ${window.location.origin}${path}`,
+    'Por seguridad le pediremos su número de documento.',
+  ].join('\n');
+
+  async function generate() {
+    setBusy(true);
+    setError('');
+    setCopied(false);
+    try {
+      setPath((await api(`/staff/appointments/${appt.id}/patient-link`, { method: 'POST' })).path);
+      onChanged();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopied(true);
+    } catch {
+      setError('No se pudo copiar al portapapeles.');
+    }
+  }
+
+  return (
+    <section className="panel span-2">
+      <div className="panel-head">
+        <h2>Enlace para el paciente</h2>
+        {canManage && active && (
+          <button className="btn btn-ghost btn-sm" onClick={generate} disabled={busy}>
+            {busy ? 'Generando…' : info ? 'Generar enlace nuevo' : 'Generar enlace'}
+          </button>
+        )}
+      </div>
+      <p className="muted small">
+        {!active ? 'La cita está cancelada o ya pasó: el enlace ya no aplica.'
+          : info ? <>Enlace vigente generado {fmtDateTime(info.createdAt)}{info.createdBy ? ` por ${info.createdBy}` : ' al crear la cita'}
+            {' · '}{info.lastUsedAt ? `último uso del paciente: ${fmtDateTime(info.lastUsedAt)}` : 'el paciente aún no lo ha abierto'}.
+            {!path && ' Por seguridad no se puede volver a mostrar: genere uno nuevo si necesita enviarlo (el anterior deja de funcionar).'}</>
+            : 'Esta cita no tiene enlace vigente.'}
+      </p>
+      <Alert>{error}</Alert>
+      {path && active && (
+        <div className="link-box">
+          <textarea readOnly rows={4} value={message} aria-label="Mensaje para el paciente" />
+          <div className="row-actions">
+            <button className="btn btn-sm" onClick={copy}>{copied ? '✓ Copiado' : 'Copiar mensaje para WhatsApp'}</button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

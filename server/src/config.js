@@ -34,5 +34,6 @@ export const config = {
   tzOffset: '-05:00', // Colombia no tiene horario de verano
   bookingWindowDays: 60,
   maxActiveRequestsPerPatient: 3,
+  patientChangeMinHours: 2, // el paciente no puede cancelar ni reprogramar con menos anticipación
   consentVersion: 'v0.1-prototipo',
 };

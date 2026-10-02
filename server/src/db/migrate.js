@@ -9,7 +9,7 @@ import { pool } from './pool.js';
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
 const PROTOTYPE_TABLES = [
-  'notification_outbox', 'audit_logs', 'appointment_status_history', 'appointments', 'patients',
+  'appointment_access_links', 'notification_outbox', 'audit_logs', 'appointment_status_history', 'appointments', 'patients',
   'schedules', 'professionals', 'specialties', 'users', 'role_permissions', 'permissions', 'roles',
   'schema_migrations',
 ];
